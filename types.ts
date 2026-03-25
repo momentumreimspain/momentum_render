@@ -1,3 +1,4 @@
+export type MultiImageSequenceMode = 'continuous' | 'separate';
 
 export type VideoResolution = '720p' | '1080p';
 export type CameraMovement = 'static' | 'pan-left' | 'pan-right' | 'tilt-up' | 'tilt-down' | 'zoom-in' | 'zoom-out' | 'dolly-in' | 'dolly-out' | 'orbit' | 'crane';

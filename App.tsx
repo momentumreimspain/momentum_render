@@ -1,7 +1,9 @@
 import React, { useState, useCallback, useEffect } from "react";
 import type { User as SupabaseUser } from "@supabase/supabase-js";
 import { Timestamp } from "firebase/firestore";
-import { generateVideoFromImage } from "./services/geminiService";
+import { generateVideoBlobFromImage } from "./services/geminiService";
+import { stitchVideoBlobs } from "./utils/videoStitch";
+import { buildScenePrompt } from "./utils/scenePrompt";
 import {
   logOut as supabaseLogOut,
   onAuthChange as supabaseOnAuthChange,
@@ -9,14 +11,13 @@ import {
 import {
   saveVideoProject,
   getAllProjects,
-  deleteVideoProject,
   uploadFile,
   updateVideoProject,
   VideoProject
 } from "./services/firebaseService";
 import { useTheme } from "./hooks/useTheme";
 import { Header } from "./components/Header";
-import { ImageUpload } from "./components/ImageUpload";
+import { MultiImageUpload } from "./components/MultiImageUpload";
 import { VideoPlayer } from "./components/VideoPlayer";
 import { Loader } from "./components/Loader";
 import { Button } from "./components/ui/Button";
@@ -36,7 +37,7 @@ import { useToast } from "./components/Toast";
 import { KeyboardShortcutsHelp } from "./components/KeyboardShortcutsHelp";
 import { VideoModal } from "./components/VideoModal";
 import { LoginModal } from "./components/LoginModal";
-import type { VeoResponse, VideoResolution, MusicTrack, CameraMovement, MovementSpeed, Duration } from "./types";
+import type { VideoResolution, MusicTrack, CameraMovement, MovementSpeed, Duration, MultiImageSequenceMode } from "./types";
 
 declare global {
   interface AIStudio {
@@ -67,7 +68,10 @@ const App: React.FC = () => {
   const [showLoginModal, setShowLoginModal] = useState(false);
 
   // Core state
-  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [imageFiles, setImageFiles] = useState<File[]>([]);
+  const [sequenceMode, setSequenceMode] = useState<MultiImageSequenceMode>("continuous");
+  const [generationProgress, setGenerationProgress] = useState<string | null>(null);
+  const [videoDownloadExt, setVideoDownloadExt] = useState<"mp4" | "webm">("mp4");
   const [prompt, setPrompt] = useState<string>("");
   const [resolution, setResolution] = useState<VideoResolution>("720p");
   const [selectedMusic, setSelectedMusic] = useState<MusicTrack>(musicTracks[0]);
@@ -113,7 +117,7 @@ const App: React.FC = () => {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Cmd/Ctrl + Enter: Generate video
-      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && imageFile && !isLoading) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'Enter' && imageFiles.length > 0 && !isLoading) {
         e.preventDefault();
         handleGenerateVideo();
         showToast('Generando video... (⌘+Enter)', 'info');
@@ -135,13 +139,14 @@ const App: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [imageFile, isLoading, videoUrl, user]);
+  }, [imageFiles.length, isLoading, videoUrl, user]);
 
   const checkApiKey = useCallback(async () => {
     if (window.aistudio) {
       const hasKey = await window.aistudio.hasSelectedApiKey();
       setApiKeySelected(hasKey);
     } else {
+      // Clave solo en servidor (/api o middleware de Vite); no hace falta selección en el cliente.
       setApiKeySelected(true);
     }
   }, []);
@@ -169,18 +174,19 @@ const App: React.FC = () => {
   const handleSignOut = async () => {
     try {
       await supabaseLogOut();
-      setVideoUrl(null);
-      setImageFile(null);
+      setVideoUrl((prev) => {
+        revokeBlobUrl(prev);
+        return null;
+      });
+      setImageFiles([]);
       setPrompt("");
     } catch (error) {
       console.error("Error signing out:", error);
     }
   };
 
-  const handleImageUpload = (file: File) => {
-    setImageFile(file);
-    setVideoUrl(null);
-    setError(null);
+  const revokeBlobUrl = (url: string | null) => {
+    if (url && url.startsWith("blob:")) URL.revokeObjectURL(url);
   };
 
   const handlePresetSelect = (preset: { movement: CameraMovement; speed: MovementSpeed; duration: Duration; intensity: number }) => {
@@ -191,8 +197,8 @@ const App: React.FC = () => {
   };
 
   const handleGenerateVideo = async () => {
-    if (!imageFile) {
-      setError("Sube una imagen primero");
+    if (imageFiles.length === 0) {
+      setError("Sube al menos una imagen");
       return;
     }
 
@@ -203,120 +209,179 @@ const App: React.FC = () => {
 
     setIsLoading(true);
     setError(null);
-    setVideoUrl(null);
+    setVideoUrl((prev) => {
+      revokeBlobUrl(prev);
+      return null;
+    });
+
+    const movementDescriptions: Record<CameraMovement, string> = {
+      static: "static camera, no movement",
+      "pan-left": "smooth camera pan to the left",
+      "pan-right": "smooth camera pan to the right",
+      "tilt-up": "camera tilts upward",
+      "tilt-down": "camera tilts downward",
+      "zoom-in": "camera zooms in slowly",
+      "zoom-out": "camera zooms out slowly",
+      "dolly-in": "camera dollies in towards subject",
+      "dolly-out": "camera dollies out from subject",
+      orbit: "camera orbits around the subject",
+      crane: "crane shot moving elegantly",
+    };
+
+    const speedDescriptions: Record<MovementSpeed, string> = {
+      slow: "very slow and cinematic",
+      medium: "at a moderate pace",
+      fast: "quickly and dynamically",
+    };
+
+    const movementLine = movementDescriptions[cameraMovement];
+    const speedLine = speedDescriptions[movementSpeed];
+
+    if (imageFiles.length > 1) {
+      showToast(
+        `Generando ${imageFiles.length} escenas (puede tardar varios minutos)…`,
+        "info"
+      );
+    }
 
     try {
-      const base64Image = await blobToBase64(imageFile);
-      const mimeType = imageFile.type;
+      const blobs: Blob[] = [];
 
-      // Build enhanced prompt with camera parameters
-      const movementDescriptions: Record<CameraMovement, string> = {
-        'static': 'static camera, no movement',
-        'pan-left': 'smooth camera pan to the left',
-        'pan-right': 'smooth camera pan to the right',
-        'tilt-up': 'camera tilts upward',
-        'tilt-down': 'camera tilts downward',
-        'zoom-in': 'camera zooms in slowly',
-        'zoom-out': 'camera zooms out slowly',
-        'dolly-in': 'camera dollies in towards subject',
-        'dolly-out': 'camera dollies out from subject',
-        'orbit': 'camera orbits around the subject',
-        'crane': 'crane shot moving elegantly'
-      };
+      for (let i = 0; i < imageFiles.length; i++) {
+        setGenerationProgress(`Escena ${i + 1} de ${imageFiles.length}…`);
 
-      const speedDescriptions: Record<MovementSpeed, string> = {
-        'slow': 'very slow and cinematic',
-        'medium': 'at a moderate pace',
-        'fast': 'quickly and dynamically'
-      };
+        const base64Image = await blobToBase64(imageFiles[i]);
+        const mimeType = imageFiles[i].type || "image/jpeg";
+        const scenePrompt = buildScenePrompt(
+          movementLine,
+          speedLine,
+          duration,
+          prompt,
+          sequenceMode,
+          i,
+          imageFiles.length
+        );
 
-      const enhancedPrompt = `${movementDescriptions[cameraMovement]} ${speedDescriptions[movementSpeed]}, ${duration} duration${prompt ? `. ${prompt}` : ''}. Professional cinematography, smooth motion, high quality rendering.`;
+        const result = await generateVideoBlobFromImage(
+          base64Image,
+          mimeType,
+          scenePrompt,
+          resolution
+        );
 
-      const result: VeoResponse = await generateVideoFromImage(
-        base64Image,
-        mimeType,
-        enhancedPrompt,
-        resolution
+        if ("error" in result) {
+          setError(result.error);
+          showToast(result.error, "error");
+          if (result.error.includes("Requested entity was not found.")) {
+            setApiKeySelected(false);
+          }
+          return;
+        }
+
+        blobs.push(result.blob);
+      }
+
+      setGenerationProgress(
+        imageFiles.length > 1 ? "Uniendo escenas en un solo video…" : null
       );
 
-      if (result.videoUrl) {
-        setVideoUrl(result.videoUrl);
-        showToast('Video generado exitosamente', 'success');
+      let finalBlob: Blob;
+      try {
+        finalBlob = await stitchVideoBlobs(blobs, sequenceMode);
+      } catch (stitchErr: any) {
+        console.error(stitchErr);
+        const msg =
+          stitchErr?.message ||
+          "No se pudieron unir los clips en este navegador.";
+        finalBlob = blobs[0];
+        setError(`${msg} Se muestra solo la primera escena.`);
+        showToast(msg, "error");
+      }
 
-        // Auto-save project if user is logged in
-        if (user && imageFile) {
-          setTimeout(async () => {
-            try {
-              console.log('Starting auto-save with user:', user.id);
+      const ext =
+        finalBlob.type.includes("webm") || finalBlob.type.includes("WebM")
+          ? "webm"
+          : "mp4";
+      setVideoDownloadExt(ext);
 
-              const imagePath = `users/${user.id}/images/${Date.now()}_${imageFile.name}`;
-              console.log('Uploading image to:', imagePath);
-              const imageUrl = await uploadFile(imageFile, imagePath);
-              console.log('Image uploaded:', imageUrl);
+      const objectUrl = URL.createObjectURL(finalBlob);
+      setVideoUrl(objectUrl);
 
-              console.log('Fetching video blob...');
-              const videoBlob = await fetch(result.videoUrl!).then(r => r.blob());
-              console.log('Video blob size:', videoBlob.size);
+      showToast(
+        imageFiles.length > 1
+          ? "Secuencia generada correctamente"
+          : "Video generado exitosamente",
+        "success"
+      );
 
-              const videoPath = `users/${user.id}/videos/${Date.now()}.mp4`;
-              console.log('Uploading video to:', videoPath);
-              const videoStorageUrl = await uploadFile(videoBlob, videoPath);
-              console.log('Video uploaded:', videoStorageUrl);
+      const firstFile = imageFiles[0];
+      if (user && firstFile) {
+        setTimeout(async () => {
+          try {
+            const imagePath = `users/${user.id}/images/${Date.now()}_${firstFile.name}`;
+            const imageUrl = await uploadFile(firstFile, imagePath);
 
-              const project: Omit<VideoProject, 'id'> = {
-                userId: user.id,
-                userEmail: user.email || 'unknown@momentumbrain.com',
-                userName: user.user_metadata?.name || user.email?.split('@')[0] || 'Usuario',
-                ...(user.user_metadata?.avatar_url && { userPhoto: user.user_metadata.avatar_url }),
-                imageUrl,
-                videoUrl: videoStorageUrl,
-                prompt,
-                resolution,
-                musicTrack: selectedMusic.name,
-                tags: [],
-                description: '',
-                createdAt: Timestamp.now(),
-                updatedAt: Timestamp.now(),
-                cameraMovement,
-                movementSpeed,
-                duration,
-                intensity,
-              };
+            const videoBlob = finalBlob;
+            const videoPath = `users/${user.id}/videos/${Date.now()}.${ext}`;
+            const videoStorageUrl = await uploadFile(videoBlob, videoPath);
 
-              console.log('Saving project to Firestore:', project);
-              const projectId = await saveVideoProject(project);
-              console.log('Project saved with ID:', projectId);
+            const seqDescription =
+              imageFiles.length > 1
+                ? `Secuencia de ${imageFiles.length} imágenes (${
+                    sequenceMode === "continuous"
+                      ? "continuidad visual"
+                      : "escenas independientes"
+                  }).`
+                : "";
 
-              setCurrentProjectId(projectId);
-              await loadProjects();
-              showToast('Proyecto guardado automáticamente', 'success');
-            } catch (error: any) {
-              console.error('Error auto-saving project:', error);
-              console.error('Error details:', {
-                message: error.message,
-                code: error.code,
-                stack: error.stack
-              });
-              showToast(`Error al guardar: ${error.message || 'Error desconocido'}`, 'error');
-            }
-          }, 1000);
-        }
-      } else if (result.error) {
-        setError(result.error);
-        showToast(result.error, 'error');
-        if (result.error.includes("Requested entity was not found.")) {
-          setApiKeySelected(false);
-        }
+            const project: Omit<VideoProject, "id"> = {
+              userId: user.id,
+              userEmail: user.email || "unknown@momentumbrain.com",
+              userName:
+                user.user_metadata?.name ||
+                user.email?.split("@")[0] ||
+                "Usuario",
+              ...(user.user_metadata?.avatar_url && {
+                userPhoto: user.user_metadata.avatar_url,
+              }),
+              imageUrl,
+              videoUrl: videoStorageUrl,
+              prompt,
+              resolution,
+              musicTrack: selectedMusic.name,
+              tags: imageFiles.length > 1 ? ["secuencia"] : [],
+              description: seqDescription,
+              createdAt: Timestamp.now(),
+              updatedAt: Timestamp.now(),
+              cameraMovement,
+              movementSpeed,
+              duration,
+              intensity,
+            };
+
+            const projectId = await saveVideoProject(project);
+            setCurrentProjectId(projectId);
+            await loadProjects();
+            showToast("Proyecto guardado automáticamente", "success");
+          } catch (error: any) {
+            console.error("Error auto-saving project:", error);
+            showToast(
+              `Error al guardar: ${error.message || "Error desconocido"}`,
+              "error"
+            );
+          }
+        }, 1000);
       }
     } catch (e: any) {
       console.error("Video generation failed:", e);
       const errorMsg = e.message || "Error generando el video";
       setError(errorMsg);
-      showToast(errorMsg, 'error');
+      showToast(errorMsg, "error");
       if (e.message?.includes("Requested entity was not found.")) {
         setApiKeySelected(false);
       }
     } finally {
+      setGenerationProgress(null);
       setIsLoading(false);
     }
   };
@@ -332,7 +397,7 @@ const App: React.FC = () => {
         setError("No se pudo abrir la selección de clave API");
       }
     } else {
-      setError("Gestión de claves no disponible");
+      setError("La clave de Gemini está en el servidor (Vercel / .env.local), no en el navegador.");
     }
   };
 
@@ -360,11 +425,12 @@ const App: React.FC = () => {
         });
       } else {
         // Create new project
-        const imagePath = `users/${user.id}/images/${Date.now()}_${imageFile?.name || 'image.jpg'}`;
-        const imageUrl = imageFile ? await uploadFile(imageFile, imagePath) : '';
+        const first = imageFiles[0];
+        const imagePath = `users/${user.id}/images/${Date.now()}_${first?.name || "image.jpg"}`;
+        const imageUrl = first ? await uploadFile(first, imagePath) : "";
 
-        const videoBlob = await fetch(videoUrl).then(r => r.blob());
-        const videoPath = `users/${user.id}/videos/${Date.now()}.mp4`;
+        const videoBlob = await fetch(videoUrl).then((r) => r.blob());
+        const videoPath = `users/${user.id}/videos/${Date.now()}.${videoDownloadExt}`;
         const videoStorageUrl = await uploadFile(videoBlob, videoPath);
 
         const project: Omit<VideoProject, 'id'> = {
@@ -404,7 +470,12 @@ const App: React.FC = () => {
   };
 
   const handleSelectProject = (project: VideoProject) => {
-    setVideoUrl(project.videoUrl);
+    setImageFiles([]);
+    setVideoDownloadExt("mp4");
+    setVideoUrl((prev) => {
+      revokeBlobUrl(prev);
+      return project.videoUrl;
+    });
     setPrompt(project.prompt);
     setResolution(project.resolution as VideoResolution);
     const music = musicTracks.find(m => m.name === project.musicTrack) || musicTracks[0];
@@ -433,16 +504,18 @@ const App: React.FC = () => {
   const handleDownload = () => {
     if (!videoUrl) return;
 
-    const link = document.createElement('a');
+    const link = document.createElement("a");
     link.href = videoUrl;
-    link.download = `video_${Date.now()}.mp4`;
+    link.download = `video_${Date.now()}.${videoDownloadExt}`;
     link.click();
   };
 
   const handleNewVideo = () => {
-    // Reset all state to start fresh
-    setVideoUrl(null);
-    setImageFile(null);
+    setVideoUrl((prev) => {
+      revokeBlobUrl(prev);
+      return null;
+    });
+    setImageFiles([]);
     setPrompt("");
     setResolution("720p");
     setSelectedMusic(musicTracks[0]);
@@ -502,13 +575,65 @@ const App: React.FC = () => {
                 <CardContent className="space-y-3">
                   {/* Image Upload */}
                   <div className="space-y-1.5">
-                    <Label>Imagen</Label>
-                    <ImageUpload
-                      onImageUpload={handleImageUpload}
+                    <Label>Imágenes (una o varias escenas)</Label>
+                    <MultiImageUpload
+                      files={imageFiles}
+                      onFilesChange={(files) => {
+                        setImageFiles(files);
+                        setVideoUrl((prev) => {
+                          revokeBlobUrl(prev);
+                          return null;
+                        });
+                        setError(null);
+                      }}
                       isAuthenticated={!!user}
                       onRequireAuth={() => setShowLoginModal(true)}
                     />
                   </div>
+
+                  {imageFiles.length > 1 && (
+                    <div className="space-y-1.5">
+                      <Label className="text-xs">Cómo unir las escenas</Label>
+                      <div className="grid grid-cols-1 gap-1.5">
+                        <label className="flex items-start gap-2 rounded-md border border-border p-2 cursor-pointer hover:bg-muted/40 has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+                          <input
+                            type="radio"
+                            name="seqMode"
+                            className="mt-0.5"
+                            checked={sequenceMode === "continuous"}
+                            onChange={() => setSequenceMode("continuous")}
+                          />
+                          <span className="text-xs">
+                            <span className="font-medium text-foreground">
+                              Continuidad visual
+                            </span>
+                            <span className="text-muted-foreground block">
+                              Misma película: prompts alineados y crossfade al
+                              unir clips.
+                            </span>
+                          </span>
+                        </label>
+                        <label className="flex items-start gap-2 rounded-md border border-border p-2 cursor-pointer hover:bg-muted/40 has-[:checked]:border-primary has-[:checked]:bg-primary/5">
+                          <input
+                            type="radio"
+                            name="seqMode"
+                            className="mt-0.5"
+                            checked={sequenceMode === "separate"}
+                            onChange={() => setSequenceMode("separate")}
+                          />
+                          <span className="text-xs">
+                            <span className="font-medium text-foreground">
+                              Escenas independientes
+                            </span>
+                            <span className="text-muted-foreground block">
+                              Planos distintos: corte con fundido a negro entre
+                              clips (estilo TV).
+                            </span>
+                          </span>
+                        </label>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Camera Presets */}
                   <CameraPresets onSelectPreset={handlePresetSelect} />
@@ -636,10 +761,16 @@ const App: React.FC = () => {
                   {/* Generate Button */}
                   <Button
                     onClick={handleGenerateVideo}
-                    disabled={isLoading || !imageFile}
+                    disabled={isLoading || imageFiles.length === 0}
                     className="w-full"
                   >
-                    {isLoading ? "Generando..." : "Generar Video"}
+                    {isLoading
+                      ? imageFiles.length > 1
+                        ? "Generando secuencia..."
+                        : "Generando..."
+                      : imageFiles.length > 1
+                        ? `Generar secuencia (${imageFiles.length})`
+                        : "Generar Video"}
                   </Button>
 
                   {!apiKeySelected && (
@@ -686,7 +817,9 @@ const App: React.FC = () => {
 
                   <CardContent>
                     <div className="bg-muted rounded-lg min-h-[400px] flex items-center justify-center">
-                      {isLoading && <Loader />}
+                      {isLoading && (
+                        <Loader statusLine={generationProgress} />
+                      )}
                       {!isLoading && !videoUrl && !error && (
                         <div className="text-center text-muted-foreground">
                           <svg className="mx-auto h-16 w-16 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -709,6 +842,8 @@ const App: React.FC = () => {
                   resolution={resolution}
                   musicTrack={selectedMusic.name}
                   prompt={prompt}
+                  multiImageCount={imageFiles.length}
+                  sequenceMode={sequenceMode}
                 />
 
                 {/* Quick Actions */}

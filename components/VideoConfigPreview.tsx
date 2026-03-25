@@ -1,5 +1,5 @@
 import React from "react";
-import { CameraMovement, MovementSpeed, Duration, VideoResolution } from "../types";
+import { CameraMovement, MovementSpeed, Duration, VideoResolution, MultiImageSequenceMode } from "../types";
 
 interface VideoConfigPreviewProps {
   movement: CameraMovement;
@@ -9,6 +9,8 @@ interface VideoConfigPreviewProps {
   resolution: VideoResolution;
   musicTrack: string;
   prompt: string;
+  multiImageCount?: number;
+  sequenceMode?: MultiImageSequenceMode;
 }
 
 const movementLabels: Record<CameraMovement, string> = {
@@ -38,7 +40,9 @@ export const VideoConfigPreview: React.FC<VideoConfigPreviewProps> = ({
   intensity,
   resolution,
   musicTrack,
-  prompt
+  prompt,
+  multiImageCount = 1,
+  sequenceMode = "continuous",
 }) => {
   return (
     <div className="rounded-lg border bg-card shadow-sm p-4">
@@ -50,6 +54,17 @@ export const VideoConfigPreview: React.FC<VideoConfigPreviewProps> = ({
       </h3>
 
       <div className="grid grid-cols-2 gap-3 text-xs">
+        {multiImageCount > 1 && (
+          <div className="space-y-1 col-span-2 pb-2 mb-1 border-b border-border">
+            <p className="text-muted-foreground font-medium">Secuencia</p>
+            <p className="text-foreground font-semibold">
+              {multiImageCount} imágenes ·{" "}
+              {sequenceMode === "continuous"
+                ? "Continuidad visual (crossfade)"
+                : "Escenas independientes (corte + negro)"}
+            </p>
+          </div>
+        )}
         {/* Camera Movement */}
         <div className="space-y-1">
           <p className="text-muted-foreground font-medium">Movimiento</p>

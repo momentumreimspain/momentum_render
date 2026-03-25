@@ -1,0 +1,8 @@
+{
+  "functions": {
+    "api/generate-video.ts": {
+      "maxDuration": 300,
+      "memory": 1024
+    }
+  }
+}

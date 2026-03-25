@@ -13,7 +13,11 @@ const loadingMessages = [
   "Almost there, preparing your animated scene...",
 ];
 
-export const Loader: React.FC = () => {
+interface LoaderProps {
+  statusLine?: string | null;
+}
+
+export const Loader: React.FC<LoaderProps> = ({ statusLine }) => {
   const [messageIndex, setMessageIndex] = useState(0);
 
   useEffect(() => {
@@ -31,6 +35,9 @@ export const Loader: React.FC = () => {
       <p className="mt-2 text-muted-foreground transition-opacity duration-500">
         {loadingMessages[messageIndex]}
       </p>
+      {statusLine ? (
+        <p className="mt-3 text-sm font-medium text-primary">{statusLine}</p>
+      ) : null}
     </div>
   );
 };
