@@ -1,7 +1,7 @@
 {
   "functions": {
     "api/generate-video.ts": {
-      "maxDuration": 300,
+      "maxDuration": 600,
       "memory": 1024
     }
   }

@@ -19,19 +19,16 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
   });
 }
 
-function isGeminiVideoBody(body: unknown): body is {
-  base64Image: string;
-  mimeType: string;
-  prompt: string;
-  resolution: "720p" | "1080p";
-} {
+function isGeminiVideoBody(body: unknown): body is import("./server/geminiGenerateVideo").GeminiVideoParams {
   if (!body || typeof body !== "object") return false;
   const b = body as Record<string, unknown>;
+  const durationOk = b.duration === "4s" || b.duration === "6s" || b.duration === "8s";
   return (
     typeof b.base64Image === "string" &&
     typeof b.mimeType === "string" &&
     typeof b.prompt === "string" &&
-    (b.resolution === "720p" || b.resolution === "1080p")
+    (b.resolution === "720p" || b.resolution === "1080p") &&
+    durationOk
   );
 }
 
@@ -69,7 +66,8 @@ export default defineConfig(({ mode }) => {
                 res.setHeader("Content-Type", "application/json");
                 res.end(
                   JSON.stringify({
-                    error: "Invalid body: base64Image, mimeType, prompt, resolution required.",
+                    error:
+                      "Invalid body: base64Image, mimeType, prompt, resolution, duration (4s|6s|8s) required.",
                   })
                 );
                 return;

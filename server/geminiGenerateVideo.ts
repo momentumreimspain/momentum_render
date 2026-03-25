@@ -1,11 +1,27 @@
 import { GoogleGenAI } from "@google/genai";
+import type { Duration } from "../types";
 
 export type GeminiVideoParams = {
   base64Image: string;
   mimeType: string;
   prompt: string;
   resolution: "720p" | "1080p";
+  /** Debe coincidir con el selector de la UI; la API usa durationSeconds. */
+  duration: Duration;
 };
+
+function durationToSeconds(d: Duration): number {
+  switch (d) {
+    case "4s":
+      return 4;
+    case "6s":
+      return 6;
+    case "8s":
+      return 8;
+    default:
+      return 6;
+  }
+}
 
 async function pollOperation(operation: unknown, ai: GoogleGenAI): Promise<unknown> {
   let currentOperation = operation as { done?: boolean };
@@ -41,6 +57,7 @@ export async function generateVideoBuffer(
         numberOfVideos: 1,
         resolution: params.resolution,
         aspectRatio: "16:9",
+        durationSeconds: durationToSeconds(params.duration),
       },
     });
 

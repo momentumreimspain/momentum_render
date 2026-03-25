@@ -266,7 +266,8 @@ const App: React.FC = () => {
           base64Image,
           mimeType,
           scenePrompt,
-          resolution
+          resolution,
+          duration
         );
 
         if ("error" in result) {
