@@ -3,7 +3,7 @@
  * (imports relativos sin .js entre archivos api/*).
  */
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { GoogleGenAI, type GenerateVideosOperation } from "@google/genai";
+import { GoogleGenAI, GenerateVideosOperation } from "@google/genai";
 import type { Duration, SerializedVideoOperation } from "../types";
 
 export type GeminiVideoParams = {
@@ -28,7 +28,7 @@ function durationToSeconds(d: Duration): number {
 }
 
 function serializeVideoOperation(op: unknown): SerializedVideoOperation {
-  const o = op as GenerateVideosOperation;
+  const o = op as InstanceType<typeof GenerateVideosOperation>;
   return {
     name: o.name,
     done: o.done,
@@ -38,8 +38,17 @@ function serializeVideoOperation(op: unknown): SerializedVideoOperation {
   };
 }
 
-function asOperationForSdk(payload: SerializedVideoOperation): GenerateVideosOperation {
-  return payload as unknown as GenerateVideosOperation;
+/**
+ * Tras JSON (cliente → servidor) el LRO es un POJO: getVideosOperation exige una
+ * instancia de GenerateVideosOperation con _fromAPIResponse en el prototipo.
+ */
+function operationStubFromSerialized(payload: SerializedVideoOperation): GenerateVideosOperation {
+  if (!payload.name) {
+    throw new Error("Operation name is required.");
+  }
+  const op = new GenerateVideosOperation();
+  op.name = payload.name;
+  return op;
 }
 
 async function startGenerateVideoOperation(
@@ -90,7 +99,7 @@ async function refreshGenerateVideoOperation(
 
   try {
     const updated = await ai.operations.getVideosOperation({
-      operation: asOperationForSdk(payload),
+      operation: operationStubFromSerialized(payload),
     });
     return { ok: true, operation: serializeVideoOperation(updated) };
   } catch (error: unknown) {
