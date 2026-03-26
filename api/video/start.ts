@@ -2,7 +2,7 @@ import type { VercelRequest, VercelResponse } from "@vercel/node";
 import {
   startGenerateVideoOperation,
   type GeminiVideoParams,
-} from "../../server/geminiGenerateVideo";
+} from "../lib/geminiGenerateVideo";
 
 function isValidBody(body: unknown): body is GeminiVideoParams {
   if (!body || typeof body !== "object") return false;

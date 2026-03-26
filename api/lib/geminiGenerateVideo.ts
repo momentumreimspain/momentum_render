@@ -1,5 +1,5 @@
 import { GoogleGenAI, type GenerateVideosOperation } from "@google/genai";
-import type { Duration, SerializedVideoOperation } from "../types";
+import type { Duration, SerializedVideoOperation } from "../../types";
 
 export type GeminiVideoParams = {
   base64Image: string;

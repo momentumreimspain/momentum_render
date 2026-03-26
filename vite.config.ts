@@ -19,7 +19,7 @@ function readJsonBody(req: IncomingMessage): Promise<unknown> {
   });
 }
 
-function isGeminiVideoBody(body: unknown): body is import("./server/geminiGenerateVideo").GeminiVideoParams {
+function isGeminiVideoBody(body: unknown): body is import("./api/lib/geminiGenerateVideo").GeminiVideoParams {
   if (!body || typeof body !== "object") return false;
   const b = body as Record<string, unknown>;
   const durationOk = b.duration === "4s" || b.duration === "6s" || b.duration === "8s";
@@ -70,7 +70,7 @@ export default defineConfig(({ mode }) => {
 
             try {
               const body = await readJsonBody(req as IncomingMessage);
-              const mod = await import("./server/geminiGenerateVideo");
+              const mod = await import("./api/lib/geminiGenerateVideo");
 
               if (pathname === "/api/video/start") {
                 if (!isGeminiVideoBody(body)) {

@@ -1,5 +1,5 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { downloadVideoFromUri } from "../../server/geminiGenerateVideo";
+import { downloadVideoFromUri } from "../lib/geminiGenerateVideo";
 
 function isValidBody(body: unknown): body is { videoUri: string } {
   if (!body || typeof body !== "object") return false;

@@ -1,6 +1,6 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
 import type { SerializedVideoOperation } from "../../types";
-import { refreshGenerateVideoOperation } from "../../server/geminiGenerateVideo";
+import { refreshGenerateVideoOperation } from "../lib/geminiGenerateVideo";
 
 function isValidBody(body: unknown): body is { operation: SerializedVideoOperation } {
   if (!body || typeof body !== "object") return false;
