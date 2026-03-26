@@ -50,7 +50,7 @@ export const Header: React.FC<HeaderProps> = ({ theme, onThemeChange, user, onSi
               </svg>
             </div>
             <div className="text-left">
-              <h1 className="text-base font-semibold text-foreground">Momentum AI RE</h1>
+              <h1 className="text-base font-semibold text-foreground">Momentum Render</h1>
               <p className="text-xs text-muted-foreground">Generador de Videos con IA</p>
             </div>
           </button>
