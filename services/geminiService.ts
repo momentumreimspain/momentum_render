@@ -51,13 +51,13 @@ export async function generateVideoBlobFromImage(
   resolution: VideoResolution,
   duration: Duration
 ): Promise<VideoBlobResult> {
-  const payload = { base64Image, mimeType, prompt, resolution, duration };
+  const startBody = { step: "start" as const, base64Image, mimeType, prompt, resolution, duration };
 
   try {
-    const startRes = await fetch("/api/video/start", {
+    const startRes = await fetch("/api/gemini-video", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
+      body: JSON.stringify(startBody),
     });
 
     if (!startRes.ok) {
@@ -80,10 +80,10 @@ export async function generateVideoBlobFromImage(
     while (!operation.done) {
       await new Promise((r) => setTimeout(r, POLL_MS));
 
-      const statusRes = await fetch("/api/video/status", {
+      const statusRes = await fetch("/api/gemini-video", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ operation }),
+        body: JSON.stringify({ step: "status", operation }),
       });
 
       if (!statusRes.ok) {
@@ -109,10 +109,10 @@ export async function generateVideoBlobFromImage(
       return { error: interpreted.error };
     }
 
-    const dlRes = await fetch("/api/video/download", {
+    const dlRes = await fetch("/api/gemini-video", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ videoUri: interpreted.videoUri }),
+      body: JSON.stringify({ step: "download", videoUri: interpreted.videoUri }),
     });
 
     const dlCt = dlRes.headers.get("content-type") || "";
@@ -135,7 +135,7 @@ export async function generateVideoBlobFromImage(
     if (message.includes("Failed to fetch") || message.includes("NetworkError")) {
       return {
         error:
-          "No se pudo contactar con el servidor. Comprueba GEMINI_API_KEY en Vercel y que el despliegue incluya /api/video/*.",
+          "No se pudo contactar con el servidor. Comprueba GEMINI_API_KEY en Vercel y el endpoint /api/gemini-video.",
       };
     }
     return { error: message || "An unknown error occurred while generating the video." };

@@ -1,14 +1,6 @@
 {
   "functions": {
-    "api/video/start.ts": {
-      "maxDuration": 180,
-      "memory": 3008
-    },
-    "api/video/status.ts": {
-      "maxDuration": 60,
-      "memory": 1024
-    },
-    "api/video/download.ts": {
+    "api/gemini-video.ts": {
       "maxDuration": 300,
       "memory": 3008
     }

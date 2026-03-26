@@ -5,7 +5,7 @@ export type CameraMovement = 'static' | 'pan-left' | 'pan-right' | 'tilt-up' | '
 export type MovementSpeed = 'slow' | 'medium' | 'fast';
 export type Duration = '4s' | '6s' | '8s';
 
-/** LRO de Veo serializado en JSON entre cliente y /api/video/status. */
+/** LRO de Veo serializado en JSON (polling vía POST /api/gemini-video step=status). */
 export type SerializedVideoOperation = {
   name?: string;
   done?: boolean;
