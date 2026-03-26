@@ -9,7 +9,12 @@ export function buildScenePrompt(
   sceneIndex: number,
   totalScenes: number
 ): string {
-  const base = `${movementLine} ${speedLine}, ${duration} duration${userPrompt ? `. ${userPrompt}` : ''}. Professional cinematography, smooth motion, high quality rendering.`;
+  const motionOverTime =
+    totalScenes > 1
+      ? " The clip must evolve over time with visible motion (subjects, light, atmosphere, or environmental detail)—not a single frozen still held for the entire duration."
+      : "";
+
+  const base = `${movementLine} ${speedLine}, ${duration} duration${userPrompt ? `. ${userPrompt}` : ""}. Professional cinematography, smooth motion, high quality rendering.${motionOverTime}`;
 
   if (totalScenes <= 1) return base;
 

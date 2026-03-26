@@ -31,6 +31,8 @@ export interface VideoProject {
   userName?: string;
   userPhoto?: string;
   imageUrl: string;
+  /** Varias imágenes de origen (secuencias); la primera coincide con `imageUrl`. */
+  imageUrls?: string[];
   videoUrl: string;
   prompt: string;
   resolution: string;

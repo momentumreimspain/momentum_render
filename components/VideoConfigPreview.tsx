@@ -63,6 +63,9 @@ export const VideoConfigPreview: React.FC<VideoConfigPreviewProps> = ({
                 ? "Continuidad visual (crossfade)"
                 : "Escenas independientes (corte + negro)"}
             </p>
+            <p className="text-muted-foreground text-[11px] leading-snug mt-1">
+              El orden de las miniaturas (flechas ↑↓) es el orden de las escenas. Cada imagen genera un clip aparte; el modelo no puede reordenar fotos solo con el texto.
+            </p>
           </div>
         )}
         {/* Camera Movement */}

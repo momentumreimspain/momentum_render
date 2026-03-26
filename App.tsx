@@ -234,7 +234,10 @@ const App: React.FC = () => {
       fast: "quickly and dynamically",
     };
 
-    const movementLine = movementDescriptions[cameraMovement];
+    const movementLine =
+      imageFiles.length > 1 && cameraMovement === "static"
+        ? "fixed tripod camera (no pan, tilt, zoom, or dolly); keep the lens locked but animate believable motion in the scene (people, foliage, light, atmosphere)"
+        : movementDescriptions[cameraMovement];
     const speedLine = speedDescriptions[movementSpeed];
 
     if (imageFiles.length > 1) {
@@ -319,8 +322,14 @@ const App: React.FC = () => {
       if (user && firstFile) {
         setTimeout(async () => {
           try {
-            const imagePath = `users/${user.id}/images/${Date.now()}_${firstFile.name}`;
-            const imageUrl = await uploadFile(firstFile, imagePath);
+            const ts = Date.now();
+            const imageUrls: string[] = [];
+            for (let i = 0; i < imageFiles.length; i++) {
+              const f = imageFiles[i];
+              const imagePath = `users/${user.id}/images/${ts}_${i}_${f.name}`;
+              imageUrls.push(await uploadFile(f, imagePath));
+            }
+            const imageUrl = imageUrls[0];
 
             const videoBlob = finalBlob;
             const videoPath = `users/${user.id}/videos/${Date.now()}.${ext}`;
@@ -346,6 +355,7 @@ const App: React.FC = () => {
                 userPhoto: user.user_metadata.avatar_url,
               }),
               imageUrl,
+              ...(imageUrls.length > 1 ? { imageUrls } : {}),
               videoUrl: videoStorageUrl,
               prompt,
               resolution,
@@ -426,9 +436,14 @@ const App: React.FC = () => {
         });
       } else {
         // Create new project
-        const first = imageFiles[0];
-        const imagePath = `users/${user.id}/images/${Date.now()}_${first?.name || "image.jpg"}`;
-        const imageUrl = first ? await uploadFile(first, imagePath) : "";
+        const ts = Date.now();
+        const imageUrls: string[] = [];
+        for (let i = 0; i < imageFiles.length; i++) {
+          const f = imageFiles[i];
+          const imagePath = `users/${user.id}/images/${ts}_${i}_${f.name}`;
+          imageUrls.push(await uploadFile(f, imagePath));
+        }
+        const imageUrl = imageUrls[0] || "";
 
         const videoBlob = await fetch(videoUrl).then((r) => r.blob());
         const videoPath = `users/${user.id}/videos/${Date.now()}.${videoDownloadExt}`;
@@ -440,6 +455,7 @@ const App: React.FC = () => {
           userName: user.user_metadata?.name || user.email?.split('@')[0] || 'Usuario',
           ...(user.user_metadata?.avatar_url && { userPhoto: user.user_metadata.avatar_url }),
           imageUrl,
+          ...(imageUrls.length > 1 ? { imageUrls } : {}),
           videoUrl: videoStorageUrl,
           prompt,
           resolution,

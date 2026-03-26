@@ -49,6 +49,16 @@ export const MultiImageUpload: React.FC<MultiImageUploadProps> = ({
 
   const clearAll = () => onFilesChange([]);
 
+  const moveIndex = (index: number, delta: -1 | 1) => {
+    const nextIndex = index + delta;
+    if (nextIndex < 0 || nextIndex >= files.length) return;
+    const next = [...files];
+    const t = next[index];
+    next[index] = next[nextIndex];
+    next[nextIndex] = t;
+    onFilesChange(next);
+  };
+
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
     accept: { "image/*": [".jpeg", ".jpg", ".png", ".webp"] },
@@ -113,6 +123,34 @@ export const MultiImageUpload: React.FC<MultiImageUploadProps> = ({
               <span className="absolute bottom-0 left-0 right-0 bg-black/65 text-[10px] text-white text-center py-0.5">
                 {i + 1}
               </span>
+              <div className="absolute top-0.5 left-0.5 flex flex-col gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    moveIndex(i, -1);
+                  }}
+                  disabled={i === 0}
+                  className="w-5 h-5 rounded bg-black/70 text-white text-[10px] leading-5 disabled:opacity-30"
+                  aria-label={`Mover imagen ${i + 1} arriba`}
+                  title="Antes en la secuencia"
+                >
+                  ↑
+                </button>
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    moveIndex(i, 1);
+                  }}
+                  disabled={i === files.length - 1}
+                  className="w-5 h-5 rounded bg-black/70 text-white text-[10px] leading-5 disabled:opacity-30"
+                  aria-label={`Mover imagen ${i + 1} abajo`}
+                  title="Después en la secuencia"
+                >
+                  ↓
+                </button>
+              </div>
               <button
                 type="button"
                 onClick={(e) => {

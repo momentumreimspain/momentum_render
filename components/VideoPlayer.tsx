@@ -17,6 +17,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, musicUrl }) => {
     setIsPaused(true);
   }, [src]);
 
+  // Evita que la barra de progreso nativa quede al final al cargar (src/blob nuevo sin reinicio de currentTime / duración).
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const snapToStart = () => {
+      if (Number.isFinite(video.duration) && video.duration > 0) {
+        video.currentTime = 0;
+      }
+    };
+
+    video.addEventListener("loadedmetadata", snapToStart);
+    return () => {
+      video.removeEventListener("loadedmetadata", snapToStart);
+    };
+  }, [src]);
+
   const handlePlayPause = () => {
     const video = videoRef.current;
     const audio = audioRef.current;
@@ -127,10 +144,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({ src, musicUrl }) => {
           </div>
         )}
         <video
+          key={src}
           ref={videoRef}
           src={src}
           controls
           loop
+          preload="auto"
           className="w-full h-full object-contain rounded-lg shadow-lg bg-black"
         >
           Tu navegador no soporta la etiqueta de video.

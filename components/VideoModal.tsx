@@ -1,6 +1,5 @@
-import React, { useEffect } from "react";
+import React, { useEffect, useRef } from "react";
 import { VideoProject } from "../services/firebaseService";
-import { VideoPlayer } from "./VideoPlayer";
 
 interface VideoModalProps {
   project: VideoProject | null;
@@ -23,6 +22,8 @@ const movementLabels: Record<string, string> = {
 };
 
 export const VideoModal: React.FC<VideoModalProps> = ({ project, isOpen, onClose }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
   // Close modal on Escape key
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -35,7 +36,25 @@ export const VideoModal: React.FC<VideoModalProps> = ({ project, isOpen, onClose
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isOpen, onClose]);
 
+  useEffect(() => {
+    if (!isOpen || !project?.videoUrl) return;
+    const v = videoRef.current;
+    if (!v) return;
+    const snap = () => {
+      if (Number.isFinite(v.duration) && v.duration > 0) v.currentTime = 0;
+    };
+    v.addEventListener("loadedmetadata", snap);
+    return () => v.removeEventListener("loadedmetadata", snap);
+  }, [isOpen, project?.videoUrl]);
+
   if (!isOpen || !project) return null;
+
+  const sourceImages =
+    project.imageUrls && project.imageUrls.length > 0
+      ? project.imageUrls
+      : project.imageUrl
+        ? [project.imageUrl]
+        : [];
 
   const handleDownload = () => {
     const link = document.createElement('a');
@@ -107,16 +126,34 @@ export const VideoModal: React.FC<VideoModalProps> = ({ project, isOpen, onClose
               </button>
             </div>
 
-            {/* Original Image */}
-            {project.imageUrl && (
+            {/* Imágenes de origen (secuencia o una sola) */}
+            {sourceImages.length > 0 && (
               <div className="mb-6">
-                <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Imagen Original</h4>
-                <div className="rounded-lg overflow-hidden border border-gray-200 dark:border-slate-700 shadow-sm">
-                  <img
-                    src={project.imageUrl}
-                    alt="Imagen original"
-                    className="w-full h-auto object-cover"
-                  />
+                <h4 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">
+                  {sourceImages.length > 1 ? "Imágenes originales" : "Imagen original"}
+                </h4>
+                <div
+                  className={`grid gap-2 rounded-lg border border-gray-200 dark:border-slate-700 shadow-sm p-2 ${
+                    sourceImages.length > 1 ? "grid-cols-2" : "grid-cols-1"
+                  }`}
+                >
+                  {sourceImages.map((url, idx) => (
+                    <div
+                      key={`${url}-${idx}`}
+                      className="rounded-md overflow-hidden border border-gray-100 dark:border-slate-600"
+                    >
+                      <img
+                        src={url}
+                        alt={sourceImages.length > 1 ? `Imagen ${idx + 1}` : "Imagen original"}
+                        className="w-full h-auto object-cover max-h-48"
+                      />
+                      {sourceImages.length > 1 && (
+                        <p className="text-[10px] text-center text-gray-500 dark:text-gray-400 py-1 bg-gray-50 dark:bg-slate-700/80">
+                          Escena {idx + 1}
+                        </p>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
@@ -214,10 +251,13 @@ export const VideoModal: React.FC<VideoModalProps> = ({ project, isOpen, onClose
           <div className="w-[65%] bg-black flex items-center justify-center p-0 relative">
             <div className="w-full h-full">
               <video
+                key={project.videoUrl}
+                ref={videoRef}
                 src={project.videoUrl}
                 controls
                 loop
                 autoPlay
+                preload="auto"
                 className="w-full h-full object-cover"
               >
                 Tu navegador no soporta la etiqueta de video.
