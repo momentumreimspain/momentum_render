@@ -32,6 +32,8 @@ function isGeminiVideoBody(body: unknown): body is import("./server/geminiGenera
   );
 }
 
+const VIDEO_API_PATHS = new Set(["/api/video/start", "/api/video/status", "/api/video/download"]);
+
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, ".", "");
 
@@ -43,12 +45,19 @@ export default defineConfig(({ mode }) => {
     plugins: [
       react(),
       {
-        name: "gemini-generate-video-dev-api",
+        name: "gemini-video-dev-api",
         configureServer(server) {
           server.middlewares.use(async (req, res, next) => {
             const pathname = req.url?.split("?")[0];
-            if (pathname !== "/api/generate-video" || req.method !== "POST") {
+            if (!pathname || !VIDEO_API_PATHS.has(pathname)) {
               return next();
+            }
+
+            if (req.method !== "POST") {
+              res.statusCode = 405;
+              res.setHeader("Content-Type", "application/json");
+              res.end(JSON.stringify({ error: "Method not allowed" }));
+              return;
             }
 
             const apiKey = env.GEMINI_API_KEY;
@@ -61,41 +70,104 @@ export default defineConfig(({ mode }) => {
 
             try {
               const body = await readJsonBody(req as IncomingMessage);
-              if (!isGeminiVideoBody(body)) {
-                res.statusCode = 400;
+              const mod = await import("./server/geminiGenerateVideo");
+
+              if (pathname === "/api/video/start") {
+                if (!isGeminiVideoBody(body)) {
+                  res.statusCode = 400;
+                  res.setHeader("Content-Type", "application/json");
+                  res.end(
+                    JSON.stringify({
+                      error:
+                        "Invalid body: base64Image, mimeType, prompt, resolution, duration (4s|6s|8s) required.",
+                    })
+                  );
+                  return;
+                }
+                const result = await mod.startGenerateVideoOperation(apiKey, body);
+                if (!result.ok) {
+                  const status =
+                    result.httpStatus && result.httpStatus >= 400 && result.httpStatus < 600
+                      ? result.httpStatus
+                      : 500;
+                  res.statusCode = status;
+                  res.setHeader("Content-Type", "application/json");
+                  res.end(JSON.stringify({ error: result.error }));
+                  return;
+                }
+                res.statusCode = 200;
                 res.setHeader("Content-Type", "application/json");
-                res.end(
-                  JSON.stringify({
-                    error:
-                      "Invalid body: base64Image, mimeType, prompt, resolution, duration (4s|6s|8s) required.",
-                  })
+                res.end(JSON.stringify({ operation: result.operation }));
+                return;
+              }
+
+              if (pathname === "/api/video/status") {
+                if (
+                  !body ||
+                  typeof body !== "object" ||
+                  !("operation" in body) ||
+                  typeof (body as { operation: unknown }).operation !== "object" ||
+                  (body as { operation: unknown }).operation === null
+                ) {
+                  res.statusCode = 400;
+                  res.setHeader("Content-Type", "application/json");
+                  res.end(JSON.stringify({ error: "Invalid body: { operation } required." }));
+                  return;
+                }
+                const result = await mod.refreshGenerateVideoOperation(
+                  apiKey,
+                  (body as { operation: import("./types").SerializedVideoOperation }).operation
                 );
-                return;
-              }
-
-              const { generateVideoBuffer } = await import("./server/geminiGenerateVideo");
-              const result = await generateVideoBuffer(apiKey, body);
-
-              if (!result.ok) {
-                const status =
-                  result.httpStatus && result.httpStatus >= 400 && result.httpStatus < 600
-                    ? result.httpStatus
-                    : 500;
-                res.statusCode = status;
+                if (!result.ok) {
+                  const status =
+                    result.httpStatus && result.httpStatus >= 400 && result.httpStatus < 600
+                      ? result.httpStatus
+                      : 500;
+                  res.statusCode = status;
+                  res.setHeader("Content-Type", "application/json");
+                  res.end(JSON.stringify({ error: result.error }));
+                  return;
+                }
+                res.statusCode = 200;
                 res.setHeader("Content-Type", "application/json");
-                res.end(JSON.stringify({ error: result.error }));
+                res.end(JSON.stringify({ operation: result.operation }));
                 return;
               }
 
-              res.statusCode = 200;
-              res.setHeader("Content-Type", "video/mp4");
-              res.setHeader("Cache-Control", "no-store");
-              res.end(result.buffer);
+              if (pathname === "/api/video/download") {
+                if (
+                  !body ||
+                  typeof body !== "object" ||
+                  typeof (body as { videoUri?: unknown }).videoUri !== "string" ||
+                  !(body as { videoUri: string }).videoUri
+                ) {
+                  res.statusCode = 400;
+                  res.setHeader("Content-Type", "application/json");
+                  res.end(JSON.stringify({ error: "Invalid body: { videoUri } required." }));
+                  return;
+                }
+                const result = await mod.downloadVideoFromUri(apiKey, (body as { videoUri: string }).videoUri);
+                if (!result.ok) {
+                  const status =
+                    result.httpStatus && result.httpStatus >= 400 && result.httpStatus < 600
+                      ? result.httpStatus
+                      : 500;
+                  res.statusCode = status;
+                  res.setHeader("Content-Type", "application/json");
+                  res.end(JSON.stringify({ error: result.error }));
+                  return;
+                }
+                res.statusCode = 200;
+                res.setHeader("Content-Type", "video/mp4");
+                res.setHeader("Cache-Control", "no-store");
+                res.end(result.buffer);
+                return;
+              }
             } catch (e) {
-              console.error("[dev api/generate-video]", e);
+              console.error("[dev api/video]", e);
               res.statusCode = 500;
               res.setHeader("Content-Type", "application/json");
-              res.end(JSON.stringify({ error: "Internal server error during video generation." }));
+              res.end(JSON.stringify({ error: "Internal server error." }));
             }
           });
         },

@@ -1,5 +1,8 @@
 import type { VercelRequest, VercelResponse } from "@vercel/node";
-import { generateVideoBuffer, type GeminiVideoParams } from "../server/geminiGenerateVideo";
+import {
+  startGenerateVideoOperation,
+  type GeminiVideoParams,
+} from "../../server/geminiGenerateVideo";
 
 function isValidBody(body: unknown): body is GeminiVideoParams {
   if (!body || typeof body !== "object") return false;
@@ -26,23 +29,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     if (!isValidBody(req.body)) {
-      return res
-        .status(400)
-        .json({ error: "Invalid body: base64Image, mimeType, prompt, resolution, duration (4s|6s|8s) required." });
+      return res.status(400).json({
+        error: "Invalid body: base64Image, mimeType, prompt, resolution, duration (4s|6s|8s) required.",
+      });
     }
 
-    const result = await generateVideoBuffer(apiKey, req.body);
+    const result = await startGenerateVideoOperation(apiKey, req.body);
 
     if (!result.ok) {
-      const status = result.httpStatus && result.httpStatus >= 400 && result.httpStatus < 600 ? result.httpStatus : 500;
+      const status =
+        result.httpStatus && result.httpStatus >= 400 && result.httpStatus < 600 ? result.httpStatus : 500;
       return res.status(status).json({ error: result.error });
     }
 
-    res.setHeader("Content-Type", "video/mp4");
-    res.setHeader("Cache-Control", "no-store");
-    return res.status(200).send(result.buffer);
+    return res.status(200).json({ operation: result.operation });
   } catch (e) {
-    console.error("[api/generate-video]", e);
-    return res.status(500).json({ error: "Error interno al generar el vídeo." });
+    console.error("[api/video/start]", e);
+    return res.status(500).json({ error: "Error interno al iniciar la generación." });
   }
 }

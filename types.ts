@@ -5,6 +5,18 @@ export type CameraMovement = 'static' | 'pan-left' | 'pan-right' | 'tilt-up' | '
 export type MovementSpeed = 'slow' | 'medium' | 'fast';
 export type Duration = '4s' | '6s' | '8s';
 
+/** LRO de Veo serializado en JSON entre cliente y /api/video/status. */
+export type SerializedVideoOperation = {
+  name?: string;
+  done?: boolean;
+  metadata?: Record<string, unknown>;
+  error?: Record<string, unknown>;
+  response?: {
+    generatedVideos?: Array<{ video?: { uri?: string }; finishReason?: string }>;
+    error?: { message?: string };
+  };
+};
+
 export interface VeoResponse {
   videoUrl?: string;
   error?: string;

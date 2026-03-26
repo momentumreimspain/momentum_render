@@ -1,9 +1,48 @@
-import type { Duration, VeoResponse, VideoResolution } from "../types";
+import type { Duration, SerializedVideoOperation, VeoResponse, VideoResolution } from "../types";
 
 export type VideoBlobResult = { blob: Blob } | { error: string };
 
-const TIMEOUT_HINT =
-  "El servidor cortó la espera (timeout). Generar vídeo con Veo suele tardar varios minutos: en Vercel el plan Hobby limita mucho el tiempo de las funciones; hace falta un plan con ejecución larga (p. ej. Pro) y maxDuration alto, o usar npm run dev en local.";
+const POLL_MS = 10000;
+
+async function readJsonError(response: Response): Promise<string> {
+  const ct = response.headers.get("content-type") || "";
+  if (ct.includes("application/json")) {
+    const data: unknown = await response.json();
+    if (data && typeof data === "object" && "error" in data && typeof (data as { error: unknown }).error === "string") {
+      return (data as { error: string }).error;
+    }
+  }
+  return `Error del servidor (${response.status}).`;
+}
+
+function interpretDoneOperation(op: SerializedVideoOperation): { error: string } | { videoUri: string } {
+  if (op.error && Object.keys(op.error).length > 0) {
+    const msg =
+      typeof op.error === "object" && op.error !== null && "message" in op.error
+        ? String((op.error as { message: unknown }).message)
+        : JSON.stringify(op.error);
+    return { error: msg || "La operación de vídeo falló." };
+  }
+
+  const downloadLink = op.response?.generatedVideos?.[0]?.video?.uri;
+  if (!downloadLink) {
+    const errorMessage =
+      op.response?.error?.message ||
+      "Video generation completed, but no video URL was returned.";
+
+    const safetyIssue = op.response?.generatedVideos?.[0]?.finishReason;
+
+    if (safetyIssue && safetyIssue !== "SUCCESS") {
+      return {
+        error: `Video generation blocked: ${safetyIssue}. Try a different prompt or image.`,
+      };
+    }
+
+    return { error: errorMessage };
+  }
+
+  return { videoUri: downloadLink };
+}
 
 export async function generateVideoBlobFromImage(
   base64Image: string,
@@ -15,39 +54,80 @@ export async function generateVideoBlobFromImage(
   const payload = { base64Image, mimeType, prompt, resolution, duration };
 
   try {
-    const response = await fetch("/api/generate-video", {
+    const startRes = await fetch("/api/video/start", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
 
-    const contentType = response.headers.get("content-type") || "";
-
-    if (!response.ok) {
-      if (contentType.includes("application/json")) {
-        const data: unknown = await response.json();
-        const err =
-          data && typeof data === "object" && "error" in data && typeof (data as { error: unknown }).error === "string"
-            ? (data as { error: string }).error
-            : "Video generation failed.";
-        return { error: err };
-      }
-      if (response.status === 502 || response.status === 503 || response.status === 504) {
-        return { error: TIMEOUT_HINT };
-      }
-      return { error: `Error del servidor (${response.status}).` };
+    if (!startRes.ok) {
+      return { error: await readJsonError(startRes) };
     }
 
-    if (contentType.includes("application/json")) {
-      const data: unknown = await response.json();
-      const err =
-        data && typeof data === "object" && "error" in data && typeof (data as { error: unknown }).error === "string"
-          ? (data as { error: string }).error
-          : "Video generation failed.";
-      return { error: err };
+    const startData: unknown = await startRes.json();
+    if (
+      !startData ||
+      typeof startData !== "object" ||
+      !("operation" in startData) ||
+      typeof (startData as { operation: unknown }).operation !== "object" ||
+      (startData as { operation: unknown }).operation === null
+    ) {
+      return { error: "Respuesta inválida del servidor (start)." };
     }
 
-    const videoBlob = await response.blob();
+    let operation = (startData as { operation: SerializedVideoOperation }).operation;
+
+    while (!operation.done) {
+      await new Promise((r) => setTimeout(r, POLL_MS));
+
+      const statusRes = await fetch("/api/video/status", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ operation }),
+      });
+
+      if (!statusRes.ok) {
+        return { error: await readJsonError(statusRes) };
+      }
+
+      const statusData: unknown = await statusRes.json();
+      if (
+        !statusData ||
+        typeof statusData !== "object" ||
+        !("operation" in statusData) ||
+        typeof (statusData as { operation: unknown }).operation !== "object" ||
+        (statusData as { operation: unknown }).operation === null
+      ) {
+        return { error: "Respuesta inválida del servidor (status)." };
+      }
+
+      operation = (statusData as { operation: SerializedVideoOperation }).operation;
+    }
+
+    const interpreted = interpretDoneOperation(operation);
+    if ("error" in interpreted) {
+      return { error: interpreted.error };
+    }
+
+    const dlRes = await fetch("/api/video/download", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ videoUri: interpreted.videoUri }),
+    });
+
+    const dlCt = dlRes.headers.get("content-type") || "";
+    if (!dlRes.ok) {
+      if (dlCt.includes("application/json")) {
+        return { error: await readJsonError(dlRes) };
+      }
+      return { error: `Error al descargar el vídeo (${dlRes.status}).` };
+    }
+
+    if (dlCt.includes("application/json")) {
+      return { error: await readJsonError(dlRes) };
+    }
+
+    const videoBlob = await dlRes.blob();
     return { blob: videoBlob };
   } catch (error: unknown) {
     console.error("Error generating video:", error);
@@ -55,7 +135,7 @@ export async function generateVideoBlobFromImage(
     if (message.includes("Failed to fetch") || message.includes("NetworkError")) {
       return {
         error:
-          "No se pudo contactar con el servidor de generación. Comprueba que GEMINI_API_KEY esté definida (Vercel o .env.local) y que estés usando npm run dev en este proyecto.",
+          "No se pudo contactar con el servidor. Comprueba GEMINI_API_KEY en Vercel y que el despliegue incluya /api/video/*.",
       };
     }
     return { error: message || "An unknown error occurred while generating the video." };

@@ -1,8 +1,16 @@
 {
   "functions": {
-    "api/generate-video.ts": {
-      "maxDuration": 600,
+    "api/video/start.ts": {
+      "maxDuration": 180,
+      "memory": 3008
+    },
+    "api/video/status.ts": {
+      "maxDuration": 60,
       "memory": 1024
+    },
+    "api/video/download.ts": {
+      "maxDuration": 300,
+      "memory": 3008
     }
   }
 }
