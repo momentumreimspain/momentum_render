@@ -19,17 +19,82 @@ function pickRecorderMimeType(): string {
   return "video/webm";
 }
 
+const LOAD_CLIP_TIMEOUT_MS = 25_000;
+
+/**
+ * Los MP4 de Veo a menudo disparan `loadeddata` antes de que `duration` sea finita.
+ * Si unimos en ese momento, `seek`/`currentTime` fallan y el canvas queda congelado en un frame
+ * (parece “una sola foto estática”) o el bucle de unión se comporta mal.
+ */
 function loadVideoFromBlob(blob: Blob): Promise<HTMLVideoElement> {
   return new Promise((resolve, reject) => {
     const v = document.createElement("video");
     v.muted = true;
     v.playsInline = true;
-    v.src = URL.createObjectURL(blob);
-    v.onloadeddata = () => resolve(v);
-    v.onerror = () => {
-      URL.revokeObjectURL(v.src);
-      reject(new Error("No se pudo cargar un clip para unir."));
+    v.preload = "auto";
+    const url = URL.createObjectURL(blob);
+    v.src = url;
+
+    let settled = false;
+    let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+    const detach = () => {
+      v.removeEventListener("loadedmetadata", tryResolve);
+      v.removeEventListener("durationchange", tryResolve);
+      v.removeEventListener("loadeddata", tryResolve);
+      v.removeEventListener("canplaythrough", tryResolve);
+      v.removeEventListener("error", onError);
     };
+
+    const fail = (msg: string) => {
+      if (settled) return;
+      settled = true;
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+      detach();
+      v.remove();
+      URL.revokeObjectURL(url);
+      reject(new Error(msg));
+    };
+
+    const tryResolve = () => {
+      if (settled) return;
+      if (
+        Number.isFinite(v.duration) &&
+        v.duration > 0.05 &&
+        v.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+        v.videoWidth > 0 &&
+        v.videoHeight > 0
+      ) {
+        settled = true;
+        if (timeoutId !== undefined) clearTimeout(timeoutId);
+        detach();
+        resolve(v);
+      }
+    };
+
+    const onError = () => fail("No se pudo cargar un clip para unir.");
+
+    timeoutId = window.setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      if (timeoutId !== undefined) clearTimeout(timeoutId);
+      detach();
+      v.remove();
+      URL.revokeObjectURL(url);
+      reject(
+        new Error(
+          "Timeout al leer metadatos de un clip (duración). Prueba otro navegador o menos escenas."
+        )
+      );
+    }, LOAD_CLIP_TIMEOUT_MS);
+
+    v.addEventListener("loadedmetadata", tryResolve);
+    v.addEventListener("durationchange", tryResolve);
+    v.addEventListener("loadeddata", tryResolve);
+    v.addEventListener("canplaythrough", tryResolve);
+    v.addEventListener("error", onError);
+    v.load();
+    tryResolve();
   });
 }
 
@@ -54,6 +119,12 @@ function waitFrame(): Promise<void> {
 
 function seekVideo(v: HTMLVideoElement, t: number): Promise<void> {
   return new Promise((resolve) => {
+    const dur = v.duration;
+    if (!Number.isFinite(dur) || dur <= 0) {
+      resolve();
+      return;
+    }
+    const target = Math.min(Math.max(0, t), Math.max(0, dur - 0.05));
     let settled = false;
     const finish = () => {
       if (settled) return;
@@ -63,8 +134,8 @@ function seekVideo(v: HTMLVideoElement, t: number): Promise<void> {
     };
     const onSeeked = () => finish();
     v.addEventListener("seeked", onSeeked);
-    v.currentTime = Math.min(Math.max(0, t), Math.max(0, v.duration - 0.05));
-    setTimeout(finish, 600);
+    v.currentTime = target;
+    setTimeout(finish, 800);
   });
 }
 
@@ -76,11 +147,22 @@ async function playSegment(
   startTime: number,
   endTime: number
 ): Promise<void> {
+  const dur = v.duration;
+  const safeEnd = Number.isFinite(endTime)
+    ? endTime
+    : Number.isFinite(dur)
+      ? dur
+      : NaN;
+  if (!Number.isFinite(safeEnd) || safeEnd <= startTime + 0.02) {
+    v.pause();
+    return;
+  }
+
   await seekVideo(v, startTime);
   await v.play().catch(() => undefined);
 
   while (true) {
-    if (v.currentTime >= endTime - 0.04 || v.ended) {
+    if (v.currentTime >= safeEnd - 0.04 || v.ended) {
       v.pause();
       break;
     }
@@ -225,6 +307,8 @@ export async function stitchVideoBlobs(
     (async () => {
       try {
         recorder.start(200);
+        // Dar tiempo a que captureStream registre el track antes del primer frame.
+        await new Promise((r) => setTimeout(r, 120));
 
         let i = 0;
         let startOffset = 0;
@@ -232,10 +316,14 @@ export async function stitchVideoBlobs(
         while (i < videos.length) {
           const v = videos[i];
           const hasNext = i < videos.length - 1;
+          const d = v.duration;
+          if (!Number.isFinite(d) || d <= 0) {
+            throw new Error("Clip sin duración válida; no se puede unir la secuencia.");
+          }
           const endTime =
             hasNext && style === "continuous"
-              ? Math.max(startOffset + 0.08, v.duration - CROSSFADE_SEC)
-              : v.duration;
+              ? Math.max(startOffset + 0.08, d - CROSSFADE_SEC)
+              : d;
 
           await playSegment(ctx, v, w, h, startOffset, endTime);
 
@@ -264,5 +352,9 @@ export async function stitchVideoBlobs(
   cleanup();
 
   const outType = mimeType.split(";")[0] || "video/webm";
-  return new Blob(chunks, { type: outType });
+  const out = new Blob(chunks, { type: outType });
+  if (out.size < 2_000) {
+    throw new Error("La unión produjo un archivo casi vacío; prueba otro navegador (Chrome recomendado).");
+  }
+  return out;
 }
